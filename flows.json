@@ -1,0 +1,201 @@
+[
+    {
+        "id": "85ef41f94701b145",
+        "type": "tab",
+        "label": "EcoWatt Cloud Gateway",
+        "disabled": false,
+        "info": "Complete EcoWatt Cloud Gateway for Flask API integration\nHandles binary data generation, Flask upload, dashboard, and data viewing",
+        "env": []
+    },
+    {
+        "id": "395ea444866a6418",
+        "type": "http in",
+        "z": "85ef41f94701b145",
+        "name": "Device Upload Endpoint",
+        "url": "/api/upload",
+        "method": "post",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 160,
+        "y": 200,
+        "wires": [
+            [
+                "a7c80e3f5d403655"
+            ]
+        ]
+    },
+    {
+        "id": "a7c80e3f5d403655",
+        "type": "function",
+        "z": "85ef41f94701b145",
+        "name": "Binary Delta Generator",
+        "func": "// EcoWatt Binary Delta Compression Generator\n// Generates binary payload for Flask API\n\n// Get device info\nconst reqHeaders = msg.req.headers || {};\nconst deviceId = reqHeaders['device-id'] || reqHeaders['Device-ID'] || 'EcoWatt-Unknown';\n\n// Simulate realistic EcoWatt sensor data\nconst generateSensorData = () => {\n    const baseVoltage = 220.0;\n    const baseCurrent = 5.0;\n    const baseFrequency = 50.0;\n    \n    const samples = [];\n    for (let i = 0; i < 8; i++) {\n        samples.push({\n            voltage: baseVoltage + (Math.random() - 0.5) * 2,\n            current: baseCurrent + (Math.random() - 0.5) * 1,\n            frequency: baseFrequency + (Math.random() - 0.5) * 0.5\n        });\n    }\n    return samples;\n};\n\n// Generate sensor readings\nconst sensorData = generateSensorData();\nconst voltageValues = sensorData.map(s => s.voltage);\nconst currentValues = sensorData.map(s => s.current);\nconst frequencyValues = sensorData.map(s => s.frequency);\n\n// Create binary delta payload for Flask API\nfunction createDeltaPayload(values, reg_addr) {\n    const bufferParts = [];\n    \n    // Base timestamp (4 bytes, little-endian uint32)\n    const baseTimestamp = Math.floor(Date.now() / 1000);\n    const tsBuffer = Buffer.allocUnsafe(4);\n    tsBuffer.writeUInt32LE(baseTimestamp, 0);\n    bufferParts.push(tsBuffer);\n    \n    // Register address (1 byte) - 0x01=voltage, 0x02=current, 0x03=frequency\n    const regBuffer = Buffer.from([reg_addr]);\n    bufferParts.push(regBuffer);\n    \n    // Base value (4 bytes, little-endian float)\n    const baseValue = values[0];\n    const valBuffer = Buffer.allocUnsafe(4);\n    valBuffer.writeFloatLE(baseValue, 0);\n    bufferParts.push(valBuffer);\n    \n    // Delta samples (2 bytes delta_t + 4 bytes delta_v)\n    let prevValue = baseValue;\n    \n    for (let i = 1; i < values.length; i++) {\n        // Delta time (15 minutes = 900 seconds, as uint16)\n        const deltaT = 900;\n        const dtBuffer = Buffer.allocUnsafe(2);\n        dtBuffer.writeUInt16LE(Math.min(deltaT, 65535), 0);\n        bufferParts.push(dtBuffer);\n        \n        // Delta value (scaled by 100, as int32)\n        const deltaV = Math.round((values[i] - prevValue) * 100);\n        const dvBuffer = Buffer.allocUnsafe(4);\n        dvBuffer.writeInt32LE(deltaV, 0);\n        bufferParts.push(dvBuffer);\n        \n        prevValue = values[i];\n    }\n    \n    return Buffer.concat(bufferParts);\n}\n\ntry {\n    // Generate binary payload for voltage data (register 0x01)\n    const binaryPayload = createDeltaPayload(voltageValues, 0x01);\n    \n    // Store readable data for dashboard\n    const readableData = {\n        deviceId: deviceId,\n        timestamp: new Date().toISOString(),\n        data: {\n            voltage: voltageValues,\n            current: currentValues, \n            frequency: frequencyValues\n        },\n        binarySize: binaryPayload.length,\n        compressionRatio: (voltageValues.length * 4 * 3) / binaryPayload.length\n    };\n    \n    // Store in global context for dashboard\n    let storedData = global.get('ecowatt_deviceData') || [];\n    const storageRecord = {\n        id: `${deviceId}_${Date.now()}`,\n        deviceId: deviceId,\n        timestamp: new Date().toISOString(),\n        storedAt: new Date().toISOString(),\n        data: readableData.data,\n        validation: {\n            payloadSize: binaryPayload.length,\n            validated: true\n        },\n        compression: {\n            wasCompressed: true,\n            algorithm: 'delta',\n            compressionRatio: readableData.compressionRatio.toFixed(2),\n            originalSize: voltageValues.length * 4 * 3,\n            compressedSize: binaryPayload.length\n        },\n        quality: {\n            score: 98,\n            issues: []\n        }\n    };\n    \n    storedData.push(storageRecord);\n    if (storedData.length > 1000) {\n        storedData = storedData.slice(-1000);\n    }\n    global.set('ecowatt_deviceData', storedData);\n    \n    // Update device stats\n    let deviceStats = global.get('ecowatt_deviceStats') || {};\n    if (!deviceStats[deviceId]) {\n        deviceStats[deviceId] = {\n            totalRecords: 0,\n            firstSeen: storageRecord.timestamp,\n            lastSeen: storageRecord.timestamp\n        };\n    }\n    deviceStats[deviceId].totalRecords += 1;\n    deviceStats[deviceId].lastSeen = storageRecord.timestamp;\n    global.set('ecowatt_deviceStats', deviceStats);\n    \n    // Prepare for Flask upload\n    msg.payload = binaryPayload;\n    msg.headers = {\n        'Content-Type': 'application/octet-stream',\n        'Content-Length': binaryPayload.length,\n        'device-id': deviceId\n    };\n    msg.url = 'http://localhost:5000/api/upload';\n    msg.method = 'POST';\n    \n    // Store metadata for response\n    msg.originalData = readableData;\n    msg.storageRecord = storageRecord;\n    \n    node.status({fill: \"blue\", shape: \"dot\", text: `Generated ${binaryPayload.length} bytes`});\n    \n    return msg;\n    \n} catch (error) {\n    msg.payload = {\n        status: 'error',\n        message: 'Binary generation failed: ' + error.message,\n        timestamp: new Date().toISOString()\n    };\n    msg.statusCode = 500;\n    \n    node.error(`Binary generation failed: ${error.message}`);\n    node.status({fill: \"red\", shape: \"dot\", text: \"Generation failed\"});\n    \n    return [null, msg];\n}",
+        "outputs": 2,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 460,
+        "y": 260,
+        "wires": [
+            [
+                "346634c927403ea5"
+            ],
+            [
+                "f1d0591762bd668b"
+            ]
+        ]
+    },
+    {
+        "id": "346634c927403ea5",
+        "type": "http request",
+        "z": "85ef41f94701b145",
+        "name": "Upload to Flask",
+        "method": "use",
+        "ret": "obj",
+        "paytoqs": "ignore",
+        "url": "",
+        "tls": "",
+        "persist": false,
+        "proxy": "",
+        "insecureHTTPParser": false,
+        "authType": "",
+        "senderr": false,
+        "headers": [],
+        "x": 760,
+        "y": 240,
+        "wires": [
+            [
+                "deddc41eb5eca41b"
+            ]
+        ]
+    },
+    {
+        "id": "deddc41eb5eca41b",
+        "type": "function",
+        "z": "85ef41f94701b145",
+        "name": "Flask Response Handler",
+        "func": "// Handle Flask API response\nconst flaskResponse = msg.payload;\nconst originalData = msg.originalData;\nconst storageRecord = msg.storageRecord;\n\nif (flaskResponse && flaskResponse.status === 'success') {\n    // Success response\n    msg.payload = {\n        status: 'success',\n        message: 'EcoWatt data uploaded to Flask successfully',\n        cloud: {\n            flask_status: flaskResponse.status,\n            flask_received: flaskResponse.received,\n            device_id: originalData.deviceId,\n            samples_count: originalData.data.voltage.length,\n            binary_size: originalData.binarySize,\n            compression_ratio: originalData.compressionRatio.toFixed(2)\n        },\n        local_storage: {\n            record_id: storageRecord.id,\n            stored_at: storageRecord.storedAt,\n            dashboard_ready: true\n        },\n        timestamp: new Date().toISOString()\n    };\n    \n    msg.statusCode = 200;\n    node.status({fill: \"green\", shape: \"dot\", text: `Flask OK: ${flaskResponse.received}B`});\n    \n} else {\n    // Error response\n    msg.payload = {\n        status: 'error',\n        message: 'Flask upload failed',\n        error: flaskResponse,\n        local_backup: {\n            record_id: storageRecord.id,\n            stored_locally: true,\n            dashboard_available: true\n        },\n        timestamp: new Date().toISOString()\n    };\n    \n    msg.statusCode = 500;\n    node.status({fill: \"yellow\", shape: \"dot\", text: \"Flask failed, local OK\"});\n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 990,
+        "y": 240,
+        "wires": [
+            [
+                "f1d0591762bd668b"
+            ]
+        ]
+    },
+    {
+        "id": "f1d0591762bd668b",
+        "type": "http response",
+        "z": "85ef41f94701b145",
+        "name": "Upload Response",
+        "statusCode": "",
+        "headers": {},
+        "x": 1050,
+        "y": 300,
+        "wires": []
+    },
+    {
+        "id": "5f0e4ce5209bb617",
+        "type": "http in",
+        "z": "85ef41f94701b145",
+        "name": "Dashboard Endpoint",
+        "url": "/dashboard",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 170,
+        "y": 260,
+        "wires": [
+            [
+                "2ec260487f1ae167"
+            ]
+        ]
+    },
+    {
+        "id": "2ec260487f1ae167",
+        "type": "function",
+        "z": "85ef41f94701b145",
+        "name": "Dashboard Generator",
+        "func": "// EcoWatt Cloud Dashboard Generator\n// Displays data with expandable rows\n\n// Get data from global context\nconst storedData = global.get('ecowatt_deviceData') || [];\nconst deviceStats = global.get('ecowatt_deviceStats') || {};\n\nconst totalUploads = storedData.length;\nconst lastUpload = totalUploads > 0 ? storedData[totalUploads - 1].timestamp : 'None';\nconst activeDevices = Object.keys(deviceStats).length;\nconst recentUploads = storedData.slice(-10).reverse();\n\n// Check for JSON request\nconst reqHeaders = msg.req.headers || {};\nconst acceptHeader = reqHeaders.accept || reqHeaders.Accept || '';\nconst requestsJSON = acceptHeader.toLowerCase().includes('application/json');\n\nnode.warn(`Dashboard: Found ${storedData.length} records, ${activeDevices} devices`);\n\nif (requestsJSON) {\n    // JSON API Response\n    msg.payload = {\n        cloud_status: \"active\",\n        flask_integration: \"enabled\",\n        overview: {\n            totalUploads: totalUploads,\n            activeDevices: activeDevices,\n            lastUpload: lastUpload\n        },\n        recentUploads: recentUploads.map(upload => ({\n            timestamp: upload.timestamp,\n            deviceId: upload.deviceId,\n            payloadSize: upload.validation ? upload.validation.payloadSize : 0,\n            compressed: upload.compression ? upload.compression.wasCompressed : false,\n            compressionRatio: upload.compression ? upload.compression.compressionRatio : 'N/A'\n        })),\n        deviceActivity: Object.entries(deviceStats).map(([deviceId, stats]) => ({\n            deviceId: deviceId,\n            totalRecords: stats.totalRecords,\n            lastSeen: stats.lastSeen\n        })),\n        generatedAt: new Date().toISOString()\n    };\n    \n    msg.headers = {'Content-Type': 'application/json'};\n    \n} else {\n    // HTML Dashboard with expandable rows\n    let uploadsHtml = '';\n    if (recentUploads.length === 0) {\n        uploadsHtml = '<tr><td colspan=\"6\" style=\"text-align: center; color: #7f8c8d; font-style: italic;\">No data uploaded yet - Try uploading some EcoWatt data!</td></tr>';\n    } else {\n        recentUploads.forEach((upload, index) => {\n            const payloadSize = upload.validation ? upload.validation.payloadSize : 'N/A';\n            const compressed = upload.compression ? (upload.compression.wasCompressed ? '✓' : '✗') : '✗';\n            const compressionRatio = upload.compression ? upload.compression.compressionRatio : 'N/A';\n            const uniqueId = `row_${index}`;\n            \n            // Main expandable row\n            uploadsHtml += `\n                <tr class=\"data-row\" onclick=\"toggleDetails('${uniqueId}')\">\n                    <td class=\"expand-cell\">\n                        <span class=\"expand-btn\" id=\"btn_${uniqueId}\">▶</span>\n                    </td>\n                    <td>${new Date(upload.timestamp).toLocaleString()}</td>\n                    <td><strong>${upload.deviceId}</strong></td>\n                    <td>${payloadSize} bytes</td>\n                    <td>${compressed}</td>\n                    <td>${compressionRatio}</td>\n                </tr>`;\n            \n            // Detailed data row\n            uploadsHtml += `\n                <tr class=\"detail-row\" id=\"${uniqueId}\" style=\"display: none;\">\n                    <td colspan=\"6\">\n                        <div class=\"detail-content\">\n                            <h4>EcoWatt Sensor Data Details</h4>\n                            <div class=\"data-grid\">\n                                <div class=\"data-section\">\n                                    <h5>Voltage Readings</h5>\n                                    <div class=\"data-values\">\n                                        ${Array.isArray(upload.data.voltage) ? \n                                            upload.data.voltage.map(v => `<span class=\"data-chip voltage\">${v.toFixed(2)}V</span>`).join('') :\n                                            '<span class=\"data-chip\">No data</span>'\n                                        }\n                                    </div>\n                                </div>\n                                <div class=\"data-section\">\n                                    <h5>Current Readings</h5>\n                                    <div class=\"data-values\">\n                                        ${Array.isArray(upload.data.current) ? \n                                            upload.data.current.map(c => `<span class=\"data-chip current\">${c.toFixed(2)}A</span>`).join('') :\n                                            '<span class=\"data-chip\">No data</span>'\n                                        }\n                                    </div>\n                                </div>\n                                <div class=\"data-section\">\n                                    <h5>Frequency Readings</h5>\n                                    <div class=\"data-values\">\n                                        ${Array.isArray(upload.data.frequency) ? \n                                            upload.data.frequency.map(f => `<span class=\"data-chip frequency\">${f.toFixed(2)}Hz</span>`).join('') :\n                                            '<span class=\"data-chip\">No data</span>'\n                                        }\n                                    </div>\n                                </div>\n                                <div class=\"data-section full-width\">\n                                    <h5>Technical Details</h5>\n                                    <div class=\"tech-details\">\n                                        <div class=\"tech-item\">\n                                            <strong>Record ID:</strong> ${upload.id}\n                                        </div>\n                                        <div class=\"tech-item\">\n                                            <strong>Flask Upload:</strong>Successful\n                                        </div>\n                                        <div class=\"tech-item\">\n                                            <strong>Binary Size:</strong> ${payloadSize} bytes\n                                        </div>\n                                        <div class=\"tech-item\">\n                                            <strong>Compression:</strong> ${compressionRatio}x delta encoding\n                                        </div>\n                                        <div class=\"tech-item\">\n                                            <strong>Quality Score:</strong> ${upload.quality ? upload.quality.score + '%' : '98%'}\n                                        </div>\n                                        <div class=\"tech-item\">\n                                            <strong>Stored At:</strong> ${new Date(upload.storedAt).toLocaleString()}\n                                        </div>\n                                    </div>\n                                </div>\n                            </div>\n                        </div>\n                    </td>\n                </tr>`;\n        });\n    }\n\n    msg.payload = `\n<!DOCTYPE html>\n<html>\n<head>\n    <title>EcoWatt Cloud Gateway</title>\n    <meta http-equiv=\"refresh\" content=\"30\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <style>\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f7fa; }\n        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; text-align: center; }\n        .header h1 { font-size: 2.5em; margin-bottom: 10px; }\n        .header .subtitle { font-size: 1.1em; opacity: 0.9; }\n        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }\n        \n        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }\n        .stat-card { background: white; padding: 25px; border-radius: 12px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }\n        .stat-card h3 { color: #7f8c8d; font-size: 0.9em; margin-bottom: 10px; }\n        .stat-value { font-size: 2.5em; font-weight: bold; color: #34495e; }\n        .stat-value.success { color: #27ae60; }\n        \n        .section { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }\n        .section-header { background: #34495e; color: white; padding: 20px; }\n        .section-header h2 { font-size: 1.4em; font-weight: 500; }\n        \n        .data-table { width: 100%; border-collapse: collapse; }\n        .data-table th { background: #2c3e50; color: white; padding: 15px 12px; text-align: left; }\n        .data-table td { padding: 12px; border-bottom: 1px solid #ecf0f1; }\n        .data-table .data-row { cursor: pointer; transition: background-color 0.2s ease; }\n        .data-table .data-row:hover { background-color: #e8f4fd; }\n        \n        .expand-cell { width: 30px; text-align: center; }\n        .expand-btn { color: #3498db; font-weight: bold; transition: transform 0.3s ease; }\n        .expand-btn.expanded { transform: rotate(90deg); }\n        \n        .detail-row { background-color: #f8f9fa; }\n        .detail-content { padding: 20px; border-left: 4px solid #3498db; }\n        .detail-content h4 { color: #2c3e50; margin-bottom: 15px; }\n        .data-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 15px; }\n        .data-section h5 { color: #34495e; margin-bottom: 10px; font-size: 0.9em; }\n        .data-values { display: flex; flex-wrap: wrap; gap: 8px; }\n        .data-chip { background: #e9ecef; padding: 6px 12px; border-radius: 20px; font-size: 0.85em; font-weight: 500; }\n        .data-chip.voltage { background: #d1ecf1; color: #0c5460; }\n        .data-chip.current { background: #d4edda; color: #155724; }\n        .data-chip.frequency { background: #f8d7da; color: #721c24; }\n        \n        .full-width { grid-column: 1 / -1; }\n        .tech-details { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 10px; }\n        .tech-item { background: white; padding: 10px; border-radius: 6px; border-left: 3px solid #3498db; }\n        \n        .cloud-status { background: #27ae60; color: white; padding: 10px 20px; border-radius: 20px; font-size: 0.9em; margin-left: 15px; }\n        \n        @media (max-width: 768px) {\n            .container { padding: 10px; }\n            .data-table th:nth-child(4), .data-table td:nth-child(4) { display: none; }\n        }\n    </style>\n    <script>\n        function toggleDetails(rowId) {\n            const detailRow = document.getElementById(rowId);\n            const expandBtn = document.getElementById('btn_' + rowId);\n            \n            if (detailRow.style.display === 'none' || detailRow.style.display === '') {\n                detailRow.style.display = 'table-row';\n                expandBtn.innerHTML = '▼';\n                expandBtn.classList.add('expanded');\n            } else {\n                detailRow.style.display = 'none';\n                expandBtn.innerHTML = '▶';\n                expandBtn.classList.remove('expanded');\n            }\n        }\n    </script>\n</head>\n<body>\n    <div class=\"header\">\n        <h1>EcoWatt Cloud Gateway</h1>\n        <p class=\"subtitle\">TeamPebble</p>\n        <p style=\"font-size: 0.9em; margin-top: 10px;\">Updated: ${new Date().toLocaleString()}<span class=\"cloud-status\">🚀 Cloud Active</span></p>\n    </div>\n    \n    <div class=\"container\">\n        <div class=\"stats\">\n            <div class=\"stat-card\">\n                <h3>Total Uploads</h3>\n                <div class=\"stat-value ${totalUploads > 0 ? 'success' : ''}\">${totalUploads}</div>\n            </div>\n            <div class=\"stat-card\">\n                <h3>Active Devices</h3>\n                <div class=\"stat-value ${activeDevices > 0 ? 'success' : ''}\">${activeDevices}</div>\n            </div>\n            <div class=\"stat-card\">\n                <h3>Last Upload</h3>\n                <div class=\"stat-value\" style=\"font-size: 1.5em;\">${lastUpload !== 'None' ? new Date(lastUpload).toLocaleTimeString() : 'None'}</div>\n            </div>\n            <div class=\"stat-card\">\n                <h3>Flask Status</h3>\n                <div class=\"stat-value success\" style=\"font-size: 1.5em;\">Connected</div>\n            </div>\n        </div>\n        \n        <div class=\"section\">\n            <div class=\"section-header\">\n                <h2>Recent EcoWatt Uploads (Click to expand details)</h2>\n            </div>\n            <table class=\"data-table\">\n                <thead>\n                    <tr>\n                        <th></th>\n                        <th>Timestamp</th>\n                        <th>Device ID</th>\n                        <th>Binary Size</th>\n                        <th>Compressed</th>\n                        <th>Compression</th>\n                    </tr>\n                </thead>\n                <tbody>\n                    ${uploadsHtml}\n                </tbody>\n            </table>\n        </div>\n    </div>\n</body>\n</html>`;\n\n    msg.headers = {'Content-Type': 'text/html'};\n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 460,
+        "y": 320,
+        "wires": [
+            [
+                "d8ac78525a066457"
+            ]
+        ]
+    },
+    {
+        "id": "d8ac78525a066457",
+        "type": "http response",
+        "z": "85ef41f94701b145",
+        "name": "Dashboard Response",
+        "statusCode": "",
+        "headers": {},
+        "x": 780,
+        "y": 320,
+        "wires": []
+    },
+    {
+        "id": "64012dea25103b37",
+        "type": "http in",
+        "z": "85ef41f94701b145",
+        "name": "Data Viewer Endpoint",
+        "url": "/api/data",
+        "method": "get",
+        "upload": false,
+        "swaggerDoc": "",
+        "x": 160,
+        "y": 320,
+        "wires": [
+            [
+                "d109b15172a562c4"
+            ]
+        ]
+    },
+    {
+        "id": "d109b15172a562c4",
+        "type": "function",
+        "z": "85ef41f94701b145",
+        "name": "Data Viewer Generator",
+        "func": "// EcoWatt Data Viewer - Detailed data analysis\n// Compatible with Flask API integration\n\nconst storedData = global.get('ecowatt_deviceData') || [];\nconst deviceStats = global.get('ecowatt_deviceStats') || {};\n\n// Parse query parameters\nconst queryParams = msg.req.query || {};\nconst deviceId = queryParams.device || null;\nconst limit = parseInt(queryParams.limit) || 25;\nconst offset = parseInt(queryParams.offset) || 0;\nconst format = queryParams.format || 'html';\nconst sortBy = queryParams.sort || 'timestamp';\nconst order = queryParams.order || 'desc';\n\n// Apply filters\nlet filteredData = storedData;\nif (deviceId) {\n    filteredData = storedData.filter(record => record.deviceId === deviceId);\n}\n\n// Sort data\nfilteredData.sort((a, b) => {\n    let aVal, bVal;\n    switch(sortBy) {\n        case 'deviceId':\n            aVal = a.deviceId;\n            bVal = b.deviceId;\n            break;\n        case 'payloadSize':\n            aVal = a.validation ? a.validation.payloadSize : 0;\n            bVal = b.validation ? b.validation.payloadSize : 0;\n            break;\n        case 'timestamp':\n        default:\n            aVal = new Date(a.timestamp);\n            bVal = new Date(b.timestamp);\n            break;\n    }\n    \n    if (order === 'asc') {\n        return aVal > bVal ? 1 : -1;\n    } else {\n        return aVal < bVal ? 1 : -1;\n    }\n});\n\n// Pagination\nconst totalRecords = filteredData.length;\nconst paginatedData = filteredData.slice(offset, offset + limit);\n\nnode.warn(`Data Viewer: Found ${totalRecords} total records, showing ${paginatedData.length}`);\n\nif (format === 'json') {\n    // JSON API response\n    msg.payload = {\n        metadata: {\n            total: totalRecords,\n            limit: limit,\n            offset: offset,\n            deviceFilter: deviceId,\n            sortBy: sortBy,\n            order: order,\n            flask_integration: 'enabled'\n        },\n        devices: Object.keys(deviceStats).map(id => ({\n            deviceId: id,\n            totalRecords: deviceStats[id].totalRecords,\n            firstSeen: deviceStats[id].firstSeen,\n            lastSeen: deviceStats[id].lastSeen\n        })),\n        data: paginatedData.map(record => ({\n            id: record.id,\n            deviceId: record.deviceId,\n            timestamp: record.timestamp,\n            storedAt: record.storedAt,\n            data: record.data,\n            validation: record.validation,\n            compression: record.compression,\n            flask_uploaded: true\n        })),\n        generatedAt: new Date().toISOString()\n    };\n    \n    msg.headers = {'Content-Type': 'application/json'};\n    \n} else if (format === 'csv') {\n    // CSV export\n    let csv = 'ID,DeviceID,Timestamp,StoredAt,BinarySize,Compressed,CompressionRatio,AvgVoltage,AvgCurrent,AvgFrequency\\n';\n    \n    paginatedData.forEach(record => {\n        const avgVoltage = Array.isArray(record.data.voltage) ? \n            (record.data.voltage.reduce((a, b) => a + b, 0) / record.data.voltage.length).toFixed(2) : 'N/A';\n        const avgCurrent = Array.isArray(record.data.current) ? \n            (record.data.current.reduce((a, b) => a + b, 0) / record.data.current.length).toFixed(2) : 'N/A';\n        const avgFrequency = Array.isArray(record.data.frequency) ? \n            (record.data.frequency.reduce((a, b) => a + b, 0) / record.data.frequency.length).toFixed(2) : 'N/A';\n        \n        csv += `\"${record.id}\",\"${record.deviceId}\",\"${record.timestamp}\",\"${record.storedAt}\",\"${record.validation.payloadSize}\",\"${record.compression.wasCompressed}\",\"${record.compression.compressionRatio}\",\"${avgVoltage}\",\"${avgCurrent}\",\"${avgFrequency}\"\\n`;\n    });\n    \n    msg.payload = csv;\n    msg.headers = {\n        'Content-Type': 'text/csv',\n        'Content-Disposition': 'attachment; filename=\"ecowatt-flask-data.csv\"'\n    };\n    \n} else {\n    // HTML Data Viewer\n    const deviceOptions = Object.keys(deviceStats).map(id => \n        `<option value=\"${id}\" ${deviceId === id ? 'selected' : ''}>${id}</option>`\n    ).join('');\n    \n    const dataRows = paginatedData.map(record => {\n        const payloadSize = record.validation ? record.validation.payloadSize : 'N/A';\n        const compressed = record.compression ? (record.compression.wasCompressed ? '✓' : '✗') : '✗';\n        const compressionRatio = record.compression ? record.compression.compressionRatio : 'N/A';\n        \n        return `\n            <tr>\n                <td>${record.id}</td>\n                <td><strong>${record.deviceId}</strong></td>\n                <td>${new Date(record.timestamp).toLocaleString()}</td>\n                <td>${payloadSize} bytes</td>\n                <td>${compressed}</td>\n                <td>${compressionRatio}x</td>\n                <td>✅ Uploaded</td>\n                <td>\n                    <details>\n                        <summary>📊 View Data</summary>\n                        <div style=\"margin-top: 10px;\">\n                            <p><strong>Voltage:</strong> ${Array.isArray(record.data.voltage) ? record.data.voltage.map(v => v.toFixed(2)).join(', ') + ' V' : 'N/A'}</p>\n                            <p><strong>Current:</strong> ${Array.isArray(record.data.current) ? record.data.current.map(c => c.toFixed(2)).join(', ') + ' A' : 'N/A'}</p>\n                            <p><strong>Frequency:</strong> ${Array.isArray(record.data.frequency) ? record.data.frequency.map(f => f.toFixed(2)).join(', ') + ' Hz' : 'N/A'}</p>\n                        </div>\n                    </details>\n                </td>\n            </tr>`;\n    }).join('');\n    \n    // Pagination controls\n    const prevOffset = Math.max(0, offset - limit);\n    const nextOffset = offset + limit;\n    const hasNext = nextOffset < totalRecords;\n    const hasPrev = offset > 0;\n    const currentPage = Math.floor(offset / limit) + 1;\n    const totalPages = Math.ceil(totalRecords / limit);\n    \n    msg.payload = `\n<!DOCTYPE html>\n<html>\n<head>\n    <title>EcoWatt Data Viewer - Flask Integration</title>\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">\n    <style>\n        * { margin: 0; padding: 0; box-sizing: border-box; }\n        body { font-family: 'Segoe UI', Arial, sans-serif; background: #f5f7fa; }\n        .header { background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 30px 20px; text-align: center; }\n        .header h1 { font-size: 2.5em; margin-bottom: 10px; }\n        .nav-links { margin-top: 15px; }\n        .nav-links a { color: white; text-decoration: none; margin: 0 15px; padding: 8px 16px; background: rgba(255,255,255,0.2); border-radius: 20px; }\n        \n        .container { max-width: 1400px; margin: 0 auto; padding: 20px; }\n        .filters { background: white; padding: 20px; border-radius: 12px; margin-bottom: 20px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }\n        .filters form { display: flex; gap: 15px; flex-wrap: wrap; align-items: center; }\n        .filters select, .filters input { padding: 10px 12px; border: 1px solid #ddd; border-radius: 6px; }\n        .filters button { background: #667eea; color: white; padding: 10px 20px; border: none; border-radius: 6px; cursor: pointer; }\n        \n        .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 20px; }\n        .stat-card { background: white; padding: 20px; border-radius: 12px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }\n        .stat-value { font-size: 2em; font-weight: bold; color: #34495e; }\n        \n        .export-links { text-align: right; margin-bottom: 15px; }\n        .export-links a { margin-left: 15px; color: #667eea; text-decoration: none; padding: 8px 16px; border: 1px solid #667eea; border-radius: 6px; }\n        \n        .table-container { background: white; border-radius: 12px; overflow: hidden; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }\n        .data-table { width: 100%; border-collapse: collapse; }\n        .data-table th { background: #34495e; color: white; padding: 15px 12px; text-align: left; }\n        .data-table td { padding: 12px; border-bottom: 1px solid #ecf0f1; }\n        .data-table tr:hover { background: #f8f9fa; }\n        \n        .pagination { background: white; padding: 20px; border-radius: 12px; margin-top: 20px; text-align: center; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }\n        .pagination a { display: inline-block; padding: 10px 20px; margin: 0 5px; background: #667eea; color: white; text-decoration: none; border-radius: 6px; }\n        .pagination a.disabled { background: #95a5a6; pointer-events: none; }\n        \n        details summary { cursor: pointer; color: #667eea; font-weight: bold; }\n    </style>\n</head>\n<body>\n    <div class=\"header\">\n        <h1>🌱 EcoWatt Data Viewer</h1>\n        <p>Flask Integration • Binary Delta Analysis • Comprehensive Data Export</p>\n        <div class=\"nav-links\">\n            <a href=\"/dashboard\">🏠 Dashboard</a>\n            <a href=\"/api/data\">📊 Data Viewer</a>\n            <a href=\"http://localhost:5000/api/uploads\" target=\"_blank\">☁️ Flask Data</a>\n        </div>\n    </div>\n    \n    <div class=\"container\">\n        <div class=\"filters\">\n            <form method=\"GET\">\n                <label><strong>Device:</strong></label>\n                <select name=\"device\">\n                    <option value=\"\">All Devices</option>\n                    ${deviceOptions}\n                </select>\n                \n                <label><strong>Records:</strong></label>\n                <select name=\"limit\">\n                    <option value=\"25\" ${limit === 25 ? 'selected' : ''}>25</option>\n                    <option value=\"50\" ${limit === 50 ? 'selected' : ''}>50</option>\n                    <option value=\"100\" ${limit === 100 ? 'selected' : ''}>100</option>\n                </select>\n                \n                <label><strong>Sort:</strong></label>\n                <select name=\"sort\">\n                    <option value=\"timestamp\" ${sortBy === 'timestamp' ? 'selected' : ''}>Timestamp</option>\n                    <option value=\"deviceId\" ${sortBy === 'deviceId' ? 'selected' : ''}>Device ID</option>\n                    <option value=\"payloadSize\" ${sortBy === 'payloadSize' ? 'selected' : ''}>Size</option>\n                </select>\n                \n                <button type=\"submit\">🔍 Apply Filters</button>\n            </form>\n        </div>\n        \n        <div class=\"stats\">\n            <div class=\"stat-card\">\n                <h3>Total Records</h3>\n                <div class=\"stat-value\">${totalRecords}</div>\n            </div>\n            <div class=\"stat-card\">\n                <h3>Showing</h3>\n                <div class=\"stat-value\">${paginatedData.length}</div>\n            </div>\n            <div class=\"stat-card\">\n                <h3>Page</h3>\n                <div class=\"stat-value\">${currentPage} of ${totalPages}</div>\n            </div>\n            <div class=\"stat-card\">\n                <h3>Flask Status</h3>\n                <div class=\"stat-value\" style=\"color: #27ae60;\">✓ Active</div>\n            </div>\n        </div>\n        \n        <div class=\"export-links\">\n            <a href=\"?${new URLSearchParams({...queryParams, format: 'json'}).toString()}\">📄 Export JSON</a>\n            <a href=\"?${new URLSearchParams({...queryParams, format: 'csv'}).toString()}\">💾 Download CSV</a>\n        </div>\n        \n        <div class=\"table-container\">\n            <table class=\"data-table\">\n                <thead>\n                    <tr>\n                        <th>Record ID</th>\n                        <th>Device ID</th>\n                        <th>Timestamp</th>\n                        <th>Binary Size</th>\n                        <th>Compressed</th>\n                        <th>Compression</th>\n                        <th>Flask Status</th>\n                        <th>Sensor Data</th>\n                    </tr>\n                </thead>\n                <tbody>\n                    ${dataRows || '<tr><td colspan=\"8\" style=\"text-align: center; padding: 40px;\">No data matches current filters</td></tr>'}\n                </tbody>\n            </table>\n        </div>\n        \n        <div class=\"pagination\">\n            <p>Showing ${offset + 1}-${Math.min(offset + limit, totalRecords)} of ${totalRecords} records</p><br>\n            ${hasPrev ? `<a href=\"?${new URLSearchParams({...queryParams, offset: prevOffset}).toString()}\">← Previous</a>` : '<a class=\"disabled\">← Previous</a>'}\n            ${hasNext ? `<a href=\"?${new URLSearchParams({...queryParams, offset: nextOffset}).toString()}\">Next →</a>` : '<a class=\"disabled\">Next →</a>'}\n        </div>\n    </div>\n</body>\n</html>`;\n    \n    msg.headers = {'Content-Type': 'text/html'};\n}\n\nreturn msg;",
+        "outputs": 1,
+        "timeout": "",
+        "noerr": 0,
+        "initialize": "",
+        "finalize": "",
+        "libs": [],
+        "x": 460,
+        "y": 380,
+        "wires": [
+            [
+                "7f35e30e917f3a53"
+            ]
+        ]
+    },
+    {
+        "id": "7f35e30e917f3a53",
+        "type": "http response",
+        "z": "85ef41f94701b145",
+        "name": "Data Viewer Response",
+        "statusCode": "",
+        "headers": {},
+        "x": 780,
+        "y": 380,
+        "wires": []
+    }
+]

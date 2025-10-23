@@ -1,0 +1,44 @@
+[
+  {
+    "timestamp": "2025-10-18T16:13:08.705032",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:13:11.037604",
+    "device_id": "EcoWatt001",
+    "nonce": 302,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-18T16:13:12.675180",
+    "device_id": "EcoWatt001",
+    "nonce": 303,
+    "config": {
+      "sampling_interval": 9,
+      "registers": [
+        0,
+        1,
+        5
+      ]
+    },
+    "status": "queued"
+  }
+]

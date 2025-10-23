@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>EcoWatt Configuration Dashboard</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <style>
+    * { margin:0; padding:0; box-sizing:border-box; }
+    body { font-family:'Segoe UI',Arial,sans-serif; background:#f5f7fa; }
+    .header { background:linear-gradient(135deg,#667eea 0%,#764ba2 100%); color:#fff; padding:26px 18px; text-align:center; }
+    .header h1 { font-size:2.2em; margin-bottom:4px; }
+    .container { max-width:900px; margin:30px auto; padding:20px; }
+    .card { background:#fff; border-radius:12px; box-shadow:0 4px 20px rgba(0,0,0,.08); padding:24px; margin-bottom:24px; }
+    .form-group { margin-bottom:20px; }
+    .form-group label { display:block; margin-bottom:8px; font-weight:600; color:#34495e; font-size:1.1em; }
+    .form-group input[type="text"], .form-group input[type="number"] { 
+      width:100%; padding:12px; border:1px solid #ddd; border-radius:6px; font-size:1em; 
+    }
+    .register-grid { 
+      display:grid; 
+      grid-template-columns:repeat(auto-fill,minmax(250px,1fr)); 
+      gap:12px; 
+      margin-top:12px;
+    }
+    .register-item { 
+      display:flex; 
+      align-items:center; 
+      gap:10px; 
+      padding:12px; 
+      background:#f8f9fa; 
+      border-radius:6px; 
+      border:2px solid transparent;
+      transition:all 0.2s;
+    }
+    .register-item:hover { background:#e9ecef; }
+    .register-item input[type="checkbox"] { 
+      width:20px; 
+      height:20px; 
+      cursor:pointer;
+    }
+    .register-item label { 
+      margin:0; 
+      font-weight:normal; 
+      cursor:pointer; 
+      flex:1;
+    }
+    .btn-primary { 
+      background:#667eea; 
+      color:#fff; 
+      padding:14px 32px; 
+      border:0; 
+      border-radius:8px; 
+      cursor:pointer; 
+      font-size:1.1em; 
+      font-weight:600;
+      width:100%;
+      transition:background 0.2s;
+    }
+    .btn-primary:hover { background:#5568d3; }
+    .alert { 
+      padding:16px; 
+      border-radius:8px; 
+      margin-top:20px; 
+      display:none;
+    }
+    .alert-success { background:#d4edda; border:1px solid #c3e6cb; color:#155724; }
+    .alert-error { background:#f8d7da; border:1px solid #f5c6cb; color:#721c24; }
+    .payload-preview {
+      background:#2c3e50;
+      color:#ecf0f1;
+      padding:16px;
+      border-radius:6px;
+      font-family:'Courier New', monospace;
+      font-size:0.9em;
+      margin-top:12px;
+      white-space:pre-wrap;
+      word-break:break-all;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>⚙️ EcoWatt Configuration Dashboard</h1>
+    <p style="opacity:.9">Remote Configuration Management</p>
+  </div>
+  
+  <div class="container">
+    <div class="card">
+      <h2 style="margin-bottom:20px; color:#2c3e50;">📤 Send Configuration Update</h2>
+      
+      <form id="configForm">
+        <div class="form-group">
+          <label for="device_id">Device ID:</label>
+          <input type="text" id="device_id" name="device_id" value="EcoWatt001" required>
+        </div>
+        
+        <div class="form-group">
+          <label for="sampling_interval">Sampling Interval (seconds):</label>
+          <input type="number" id="sampling_interval" name="sampling_interval" min="1" max="300" value="5" required>
+          <small style="color:#7f8c8d; display:block; margin-top:6px;">
+            Current: 5 seconds → Change to: 10 seconds for demo
+          </small>
+        </div>
+        
+        <div class="form-group">
+          <label>Registers to Monitor:</label>
+          <div class="register-grid">
+            <div class="register-item">
+              <input type="checkbox" id="reg0" name="registers" value="0" checked>
+              <label for="reg0">📊 Reg 0: L1 Phase Voltage (Vac1)</label>
+            </div>
+            <div class="register-item">
+              <input type="checkbox" id="reg1" name="registers" value="1" checked>
+              <label for="reg1">⚡ Reg 1: L1 Phase Current (Iac1)</label>
+            </div>
+            <div class="register-item">
+              <input type="checkbox" id="reg2" name="registers" value="2">
+              <label for="reg2">🔄 Reg 2: L1 Phase Frequency (Fac1)</label>
+            </div>
+            <div class="register-item">
+              <input type="checkbox" id="reg3" name="registers" value="3">
+              <label for="reg3">🔆 Reg 3: PV1 Input Voltage</label>
+            </div>
+            <div class="register-item">
+              <input type="checkbox" id="reg4" name="registers" value="4">
+              <label for="reg4">🔆 Reg 4: PV2 Input Voltage</label>
+            </div>
+            <div class="register-item">
+              <input type="checkbox" id="reg5" name="registers" value="5">
+              <label for="reg5">🔌 Reg 5: PV1 Input Current</label>
+            </div>
+            <div class="register-item">
+              <input type="checkbox" id="reg6" name="registers" value="6">
+              <label for="reg6">🔌 Reg 6: PV2 Input Current</label>
+            </div>
+            <div class="register-item">
+              <input type="checkbox" id="reg7" name="registers" value="7">
+              <label for="reg7">🌡️ Reg 7: Inverter Temperature</label>
+            </div>
+            <div class="register-item" style="border-color:#667eea;">
+              <input type="checkbox" id="reg8" name="registers" value="8">
+              <label for="reg8" style="font-weight:600; color:#667eea;">
+                ⚙️ Reg 8: Export Power % (NEW!)
+              </label>
+            </div>
+            <div class="register-item">
+              <input type="checkbox" id="reg9" name="registers" value="9">
+              <label for="reg9">💡 Reg 9: Current Output Power (Pac L)</label>
+            </div>
+          </div>
+        </div>
+        
+        <div class="form-group">
+          <label>📋 JSON Payload Preview:</label>
+          <div class="payload-preview" id="payloadPreview"></div>
+        </div>
+        
+        <button type="submit" class="btn-primary">📤 Send Configuration to Cloud</button>
+      </form>
+      
+      <div id="successAlert" class="alert alert-success"></div>
+      <div id="errorAlert" class="alert alert-error"></div>
+    </div>
+  </div>
+  
+  <script>
+    const form = document.getElementById('configForm');
+    const payloadPreview = document.getElementById('payloadPreview');
+    const successAlert = document.getElementById('successAlert');
+    const errorAlert = document.getElementById('errorAlert');
+    
+    // Update preview when form changes
+    function updatePreview() {
+      const formData = new FormData(form);
+      const registers = Array.from(formData.getAll('registers')).map(Number);
+      
+      const payload = {
+        device_id: formData.get('device_id'),
+        sampling_interval: parseInt(formData.get('sampling_interval')),
+        registers: registers
+      };
+      
+      payloadPreview.textContent = JSON.stringify(payload, null, 2);
+    }
+    
+    // Update preview on load and change
+    updatePreview();
+    form.addEventListener('change', updatePreview);
+    form.addEventListener('input', updatePreview);
+    
+    // Handle form submission
+    form.addEventListener('submit', async (e) => {
+      e.preventDefault();
+      
+      const formData = new FormData(form);
+      const registers = Array.from(formData.getAll('registers')).map(Number);
+      
+      const payload = {
+        device_id: formData.get('device_id'),
+        sampling_interval: parseInt(formData.get('sampling_interval')),
+        registers: registers
+      };
+      
+      // Hide previous alerts
+      successAlert.style.display = 'none';
+      errorAlert.style.display = 'none';
+      
+      try {
+        const response = await fetch('http://10.52.180.183:8080/api/cloud/config/send', {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload)
+        });
+        
+        const result = await response.json();
+        
+        if (response.ok) {
+          successAlert.innerHTML = `
+            <strong>✅ Configuration Sent Successfully!</strong><br>
+            <div style="margin-top:10px;">
+              <strong>Nonce:</strong> ${result.nonce}<br>
+              <strong>Device:</strong> ${payload.device_id}<br>
+              <strong>Interval:</strong> ${payload.sampling_interval} seconds<br>
+              <strong>Registers:</strong> [${payload.registers.join(', ')}]
+            </div>
+          `;
+          successAlert.style.display = 'block';
+          
+          // Scroll to alert
+          successAlert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        } else {
+          throw new Error(result.error || 'Configuration update failed');
+        }
+      } catch (err) {
+        errorAlert.innerHTML = `
+          <strong>❌ Error Sending Configuration</strong><br>
+          <div style="margin-top:10px;">${err.message}</div>
+          <div style="margin-top:8px; font-size:0.9em;">
+            Make sure Flask server is running at http://10.50.126.183:8080
+          </div>
+        `;
+        errorAlert.style.display = 'block';
+        
+        // Scroll to alert
+        errorAlert.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+      }
+    });
+  </script>
+</body>
+</html>

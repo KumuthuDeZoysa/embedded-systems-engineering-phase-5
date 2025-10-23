@@ -1,0 +1,47 @@
+{
+  "registers": [
+    { "addr": 0, "name": "Vac1_L1_Phase_voltage", "unit": "V", "gain": 10.0, "access": "Read" },
+    { "addr": 1, "name": "Iac1_L1_Phase_current", "unit": "A", "gain": 10.0, "access": "Read" },
+    { "addr": 8, "name": "Export_power_percentage", "unit": "%", "gain": 1.0, "access": "Read/Write" }
+  ],
+  "modbus": {
+    "slave_address": 17,
+    "timeout_ms": 5000,
+    "max_retries": 3,
+    "retry_delay_ms": 1000
+  },
+  "acquisition": {
+    "polling_interval_ms": 15000,
+    "minimum_registers": [0, 1],
+    "background_polling": true
+  },
+  "api": {
+    "inverter_base_url": "http://10.50.126.183:8080",
+    "upload_base_url": "http://10.50.126.183:8080",
+    "endpoints": {
+      "read": "/api/inverter/read",
+      "write": "/api/inverter/write",
+      "config": "/api/inverter/config",
+      "upload": "/api/upload"
+    },
+    "api_key": "YNjhhZWIwNDU1ZDdmMzg3MzNiMTQ5YTFkOjY4YWViMDQ1NWQ3ZjM4NzMzYjE0OWExMw=="
+  },
+  "wifi": {
+    "ssid": "Senum's iPhone",
+    "password": "1234567891"
+  },
+  "security": {
+    "enabled": true,
+    "psk": "c41716a134168f52fbd4be3302fa5a88127ddde749501a199607b4c286ad29b3",
+    "use_real_encryption": false,
+    "strict_nonce_checking": true,
+    "nonce_window": 100
+  },
+  "demo_mode": {
+    "enabled": true,
+    "slow_logs": true,
+    "log_delay_ms": 500,
+    "highlight_important": true,
+    "filter_debug": true
+  }
+}
