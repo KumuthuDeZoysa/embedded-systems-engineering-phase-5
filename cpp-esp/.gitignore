@@ -3,3 +3,27 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+
+# Test reports (keep only specific final versions)
+*_test_report_*.md
+!fault_recovery_test_report_20251126_144901.md
+!integration_test_report_20251126_145143.md
+
+# Power measurement reports (keep only final version)
+power_measurement_report_*.md
+!power_measurement_report_20251126_new.md
+
+# Temporary monitoring scripts
+monitor_*.ps1
+monitor_*.py
+
+# Documentation drafts
+*_GUIDE.md
+*_SUMMARY.md
+!MILESTONE_5_COMPREHENSIVE_STATUS.md
+!MILESTONE_5_COMPLIANCE_CHECK.md

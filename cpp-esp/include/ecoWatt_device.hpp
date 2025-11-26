@@ -12,6 +12,9 @@
 #include "security_layer.hpp"
 #include "secure_http_client.hpp"
 #include "fota_manager.hpp"
+#include "power_manager.hpp"
+#include "event_logger.hpp"
+#include "fault_handler.hpp"
 #include <LittleFS.h>
 #include <stdint.h>
 
@@ -48,4 +51,7 @@ private:
     SecurityLayer* security_ = nullptr;
     SecureHttpClient* secure_http_ = nullptr;
     FOTAManager* fota_ = nullptr;
+    PowerManager* power_mgr_ = nullptr;
+    EventLogger* event_logger_ = nullptr;
+    FaultHandler* fault_handler_ = nullptr;
 };

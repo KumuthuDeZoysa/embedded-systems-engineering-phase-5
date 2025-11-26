@@ -45,6 +45,9 @@ EcoWattDevice::~EcoWattDevice() {
     delete http_client_;
     delete config_;
     delete wifi_;
+    delete power_mgr_;
+    delete fault_handler_;
+    delete event_logger_;
 }
 
 // Simple JSON helpers (very small, only for our known command shapes)
@@ -212,6 +215,31 @@ void EcoWattDevice::setup() {
         Logger::error("WiFi connection failed after 30 seconds");
     }
     
+    // ========== MILESTONE 5: Initialize Power Manager ==========
+    if (!power_mgr_) {
+        Logger::info("Initializing Power Manager...");
+        
+        PowerConfig power_config;
+        power_config.enable_cpu_scaling = true;
+        power_config.enable_wifi_sleep = true;
+        power_config.enable_peripheral_gating = true;
+        power_config.enable_auto_mode = true;
+        power_config.default_mode = PowerMode::NORMAL;
+        power_config.idle_timeout_ms = 5000;  // 5 seconds idle before low power
+        power_config.enable_power_reporting = true;
+        
+        power_mgr_ = new PowerManager(power_config);
+        if (power_mgr_->begin()) {
+            Logger::info("Power Manager initialized successfully");
+            
+            // Generate and log initial power report
+            std::string report = power_mgr_->generatePowerReport();
+            Logger::info("[PowerMgr] Initial Power Report:\n%s", report.c_str());
+        } else {
+            Logger::error("Failed to initialize Power Manager");
+        }
+    }
+    
     // Initialize Security Layer (after WiFi, before HTTP operations)
     if (!security_) {
         // Load security config from config.json
@@ -281,6 +309,11 @@ void EcoWattDevice::setup() {
         scheduler_->updateConfig(acq_conf.minimum_registers.data(), acq_conf.minimum_registers.size(), acq_conf.polling_interval_ms);
         scheduler_->begin(acq_conf.polling_interval_ms);
         Logger::info("AcquisitionScheduler initialized with polling interval: %d ms", acq_conf.polling_interval_ms);
+        
+        // Signal activity to power manager when acquisition starts
+        if (power_mgr_) {
+            power_mgr_->signalActivity();
+        }
     }
 
     if (!command_executor_) {
@@ -337,6 +370,25 @@ void EcoWattDevice::setup() {
         }
     }
 
+    // Initialize Event Logger for fault tracking
+    Logger::info("Initializing Event Logger...");
+    event_logger_ = new EventLogger();
+    if (event_logger_->begin("/event_log.json", 100)) {
+        Logger::info("Event Logger initialized successfully");
+        event_logger_->logInfo("System boot", EventModule::SYSTEM, "EcoWatt Device starting up");
+    } else {
+        Logger::error("Failed to initialize Event Logger");
+    }
+
+    // Initialize Fault Handler
+    Logger::info("Initializing Fault Handler...");
+    fault_handler_ = new FaultHandler();
+    if (fault_handler_->begin(event_logger_)) {
+        Logger::info("Fault Handler initialized successfully");
+    } else {
+        Logger::error("Failed to initialize Fault Handler");
+    }
+
     // Perform a one-time write operation as part of Milestone 2 requirements.
     // Write a safe default to a writable register if configured.
     // If register 8 is present and writable, write zero (as a demo)
@@ -353,18 +405,71 @@ void EcoWattDevice::setup() {
 void EcoWattDevice::loop() {
     // Main polling, control, and data acquisition loop
     printMemoryStats("MainLoop");
+    
+    // ========== MILESTONE 5: Power Manager Loop ==========
+    if (power_mgr_) {
+        power_mgr_->loop();
+    }
+    
+    // Storage operations
     if (storage_) storage_->loop();
-    if (scheduler_) scheduler_->loop();
+    
+    // Acquisition operations (active period)
+    if (scheduler_) {
+        if (power_mgr_) power_mgr_->signalActivity();
+        scheduler_->loop();
+    }
+    
     // TEMPORARILY DISABLED FOR FOTA TESTING
     // if (uplink_packetizer_) uplink_packetizer_->loop();
+    
+    // Remote configuration and command handling
     if (remote_config_handler_) {
+        // Wake WiFi before network operations
+        if (power_mgr_) power_mgr_->wakeWiFi();
+        
         remote_config_handler_->loop();
-        // Also check for and execute commands
         remote_config_handler_->checkForCommands();
+        
+        // Allow WiFi to sleep after operations
+        if (power_mgr_) power_mgr_->sleepWiFi();
     }
+    
+    // FOTA operations
     if (fota_) {
+        // Wake WiFi before FOTA operations
+        if (power_mgr_) power_mgr_->wakeWiFi();
+        
         fota_->loop(); // Process FOTA chunk downloads
+        
+        // Allow WiFi to sleep after operations
+        if (power_mgr_) power_mgr_->sleepWiFi();
     }
+    
+    // WiFi maintenance
     if (wifi_) wifi_->loop();
-    // Other device logic...
+    
+    // Signal idle to power manager after all operations
+    static unsigned long last_activity_check = 0;
+    if (millis() - last_activity_check > 1000) { // Check every second
+        if (power_mgr_) {
+            power_mgr_->signalIdle();
+        }
+        last_activity_check = millis();
+    }
+    
+    // Log power statistics every 30 seconds
+    static unsigned long last_power_log = 0;
+    if (millis() - last_power_log > 30000) {
+        if (power_mgr_) {
+            PowerStats stats = power_mgr_->getStats();
+            Logger::info("[PowerMgr] Stats: Mode=%s, CPU=%uMHz, WiFi_Sleep=%s, Current=%.2fmA, Power=%.2fmW",
+                        powerModeToString(stats.current_mode),
+                        stats.cpu_freq_mhz,
+                        stats.wifi_sleep_enabled ? "ON" : "OFF",
+                        stats.estimated_current_ma,
+                        stats.estimated_power_mw);
+        }
+        last_power_log = millis();
+    }
 }
