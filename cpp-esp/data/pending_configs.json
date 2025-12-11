@@ -1,15 +1,24 @@
 {
   "EcoWatt001": {
+<<<<<<< Updated upstream
     "nonce": 14,
     "config_update": {
       "sampling_interval": 10,
+=======
+    "nonce": 303,
+    "config_update": {
+      "sampling_interval": 5,
+>>>>>>> Stashed changes
       "registers": [
         0,
         1,
-        2,
         4,
+<<<<<<< Updated upstream
         5,
         8
+=======
+        9
+>>>>>>> Stashed changes
       ]
     }
   }

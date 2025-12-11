@@ -1,6 +1,7 @@
 [
   {
     "device_id": "EcoWatt001",
+<<<<<<< Updated upstream
     "timestamp": "2025-12-02T21:49:42.306631",
     "nonce": 629,
     "all_success": null,
@@ -30,6 +31,10 @@
     "device_id": "EcoWatt001",
     "timestamp": "2025-12-02T21:52:56.363907",
     "nonce": 632,
+=======
+    "timestamp": "2025-10-19T01:48:27.354854",
+    "nonce": 386,
+>>>>>>> Stashed changes
     "all_success": null,
     "accepted": [],
     "rejected": [],
@@ -1026,5 +1031,128 @@
       ]
     },
     "status": "queued"
+<<<<<<< Updated upstream
+=======
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-19T03:19:22.127198",
+    "nonce": 415,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-19T03:20:19.186219",
+    "nonce": 416,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "timestamp": "2025-10-19T03:20:42.659921",
+    "device_id": "EcoWatt001",
+    "nonce": 4,
+    "config": {
+      "sampling_interval": 22,
+      "registers": [
+        0,
+        1,
+        2,
+        4,
+        6,
+        10
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "device_id": "EcoWatt001",
+    "timestamp": "2025-10-19T03:21:19.191360",
+    "nonce": 417,
+    "all_success": null,
+    "accepted": [],
+    "rejected": [],
+    "unchanged": []
+  },
+  {
+    "timestamp": "2025-10-19T03:22:00.518403",
+    "device_id": "EcoWatt001",
+    "nonce": 6,
+    "config": {
+      "sampling_interval": 22,
+      "registers": [
+        0,
+        1,
+        2,
+        4,
+        6,
+        10
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-10-19T03:24:28.590636",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 22,
+      "registers": [
+        0,
+        1,
+        2,
+        4,
+        6,
+        10
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-12-11T14:00:07.788900",
+    "device_id": "EcoWatt001",
+    "nonce": 301,
+    "config": {
+      "sampling_interval": 5,
+      "registers": [
+        0,
+        1
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-12-11T14:00:11.569075",
+    "device_id": "EcoWatt001",
+    "nonce": 302,
+    "config": {
+      "sampling_interval": 5,
+      "registers": [
+        0,
+        1,
+        4
+      ]
+    },
+    "status": "queued"
+  },
+  {
+    "timestamp": "2025-12-11T14:00:15.691626",
+    "device_id": "EcoWatt001",
+    "nonce": 303,
+    "config": {
+      "sampling_interval": 5,
+      "registers": [
+        0,
+        1,
+        4,
+        9
+      ]
+    },
+    "status": "queued"
+>>>>>>> Stashed changes
   }
 ]
