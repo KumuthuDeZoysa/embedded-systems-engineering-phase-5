@@ -16,9 +16,6 @@ SERVER_URL = "http://10.81.6.183:8080"
 # Available registers that can be written (from Inverter SIM API)
 WRITABLE_REGISTERS = {
     8: "Battery SOC (%)",
-    9: "Output Power (W)", 
-    10: "Input Power (W)",
-    # Add more as needed
 }
 
 def send_command(register: int, value: float, device_id: str = "EcoWatt001", encrypted: bool = False):
