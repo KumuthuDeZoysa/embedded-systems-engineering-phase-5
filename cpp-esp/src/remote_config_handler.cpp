@@ -63,6 +63,12 @@ void RemoteConfigHandler::checkForConfigUpdate() {
     Logger::info("[RemoteCfg] Response status: %d", resp.status_code);
     Logger::info("[RemoteCfg] Response body length: %u bytes", (unsigned)plain_response.length());
     
+    // Log first 200 chars of response body for debugging
+    if (plain_response.length() > 0) {
+        std::string truncated = plain_response.substr(0, 200);
+        Logger::info("[RemoteCfg] Response body: %s", truncated.c_str());
+    }
+    
     if (!resp.isSuccess()) {
         Logger::warn("[RemoteCfg] Failed to get config from cloud: status=%d", resp.status_code);
         return;
@@ -70,7 +76,9 @@ void RemoteConfigHandler::checkForConfigUpdate() {
     
     // Parse the response for config updates (use plain_response instead of resp.body)
     ConfigUpdateRequest request;
+    Logger::info("[RemoteCfg] Attempting to parse config update from response...");
     if (parseConfigUpdateRequest(plain_response.c_str(), request)) {
+        Logger::info("[RemoteCfg] Config update parsed successfully! Applying...");
         // Apply the configuration update
         ConfigUpdateAck ack = config_->applyConfigUpdate(request);
         
@@ -145,14 +153,14 @@ bool RemoteConfigHandler::parseConfigUpdateRequest(const char* json, ConfigUpdat
     if (doc.containsKey("status")) {
         String status = doc["status"].as<String>();
         if (status == "no_config") {
-            Logger::debug("[RemoteCfg] Server reports no pending config");
+            Logger::info("[RemoteCfg] Server reports no pending config");
             return false; // No config to process, but this is normal
         }
     }
     
     // Check if there's a config_update object
     if (!doc.containsKey("config_update")) {
-        Logger::debug("[RemoteCfg] No config_update in response");
+        Logger::info("[RemoteCfg] No config_update in response");
         return false;
     }
     
@@ -164,7 +172,7 @@ bool RemoteConfigHandler::parseConfigUpdateRequest(const char* json, ConfigUpdat
         uint32_t interval_seconds = config_update["sampling_interval"].as<uint32_t>();
         request.sampling_interval_ms = interval_seconds * 1000;
         request.has_sampling_interval = true;
-        Logger::debug("[RemoteCfg] Parsed sampling_interval: %u ms", request.sampling_interval_ms);
+        Logger::info("[RemoteCfg] Parsed sampling_interval: %u ms", request.sampling_interval_ms);
     }
     
     // Parse registers
@@ -198,7 +206,7 @@ bool RemoteConfigHandler::parseConfigUpdateRequest(const char* json, ConfigUpdat
         
         if (!request.registers.empty()) {
             request.has_registers = true;
-            Logger::debug("[RemoteCfg] Parsed %u registers", (unsigned)request.registers.size());
+            Logger::info("[RemoteCfg] Parsed %u registers", (unsigned)request.registers.size());
         }
     }
     

@@ -9,11 +9,11 @@ import json
 config_payload = {
     "device_id": "EcoWatt001",
     "sampling_interval": 10,  # Change from 5 to 10 seconds
-    "registers": [0, 1, 8]     # Only registers 0, 1, and 8 (add register 8)
+    "registers": [0, 1, 2, 3, 4, 5, 6, 7, 8]     # Only registers 0, 1, and 8 (add register 8)
 }
 
 # Flask server endpoint
-url = "http://10.50.126.183:8080/api/cloud/config/send"
+url = "http://10.198.61.183:8080/api/cloud/config/send"
 
 print("=" * 60)
 print("Sending Configuration Update to Flask Server")
@@ -37,4 +37,4 @@ try:
         
 except requests.exceptions.RequestException as e:
     print(f"\n❌ Error: {e}")
-    print("\nMake sure Flask server is running at http://10.50.126.183:8080")
+    print("\nMake sure Flask server is running at http://10.236.235.183:8080")

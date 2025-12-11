@@ -40,11 +40,11 @@ void ConfigManager::initializeDefaults() {
 
     // Hardcoded API config (inverter data accessed via api_key only)
     api_config_.inverter_base_url = "http://20.15.114.131:8080";
-    api_config_.upload_base_url = "http://10.52.180.183:8080";  // Cloud server for config/upload
+    api_config_.upload_base_url = "http://10.81.6.183:8080";  // Cloud server for config/upload
     api_config_.read_endpoint = "/api/inverter/read";
     api_config_.write_endpoint = "/api/inverter/write";
     api_config_.config_endpoint = "/api/inverter/config";
-    api_config_.upload_endpoint = "http://10.52.180.183:8080/api/upload";
+    api_config_.upload_endpoint = "http://10.81.6.183:8080/api/upload";
     api_config_.api_key = "NjhhZWIwNDU1ZDdmMzg3MzNiMTQ5YTFkOjY4YWViMDQ1NWQ3ZjM4NzMzYjE0OWExMw==";
 
     // Set correct gain values for each register
@@ -359,13 +359,36 @@ std::vector<uint8_t> ConfigManager::getActiveRegisters() const {
 
 // Nonce management
 bool ConfigManager::isNonceProcessed(uint32_t nonce) const {
-    return nonce <= persistent_config_.last_nonce;
+    // Sliding window approach for anti-replay protection
+    // Accept nonces that are:
+    // 1. Greater than last_nonce (normal case), OR
+    // 2. Within a reasonable window below last_nonce (handles server restarts)
+    
+    const uint32_t NONCE_WINDOW = 500;  // Allow nonces within this window
+    
+    if (nonce > persistent_config_.last_nonce) {
+        // Nonce is ahead - always accept
+        return false;
+    }
+    
+    // Check if nonce is within acceptable window below last_nonce
+    // This handles server restart scenarios where server nonce resets
+    if (persistent_config_.last_nonce - nonce < NONCE_WINDOW) {
+        // Within window - accept but log
+        Logger::info("[CONFIG] Accepting nonce %u (last=%u, within window)", 
+                     nonce, persistent_config_.last_nonce);
+        return false;
+    }
+    
+    // Nonce too old - reject as potential replay
+    Logger::warn("[CONFIG] Rejecting old nonce %u (last=%u, outside window)", 
+                 nonce, persistent_config_.last_nonce);
+    return true;
 }
 
 void ConfigManager::markNonceProcessed(uint32_t nonce) {
-    if (nonce > persistent_config_.last_nonce) {
-        persistent_config_.last_nonce = nonce;
-    }
+    // Track last nonce for logging purposes
+    persistent_config_.last_nonce = nonce;
 }
 
 ConfigValidationRules ConfigManager::getValidationRules() const {

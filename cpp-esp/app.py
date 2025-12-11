@@ -27,6 +27,7 @@ def log_request_info():
 # Configuration persistence
 CONFIG_FILE = Path("data/pending_configs.json")
 HISTORY_FILE = Path("data/config_history.json")
+NONCE_STATE_FILE = Path("data/server_nonce_state.json")
 
 # In-memory stores
 UPLOADS = []
@@ -35,6 +36,14 @@ BENCHMARKS = []
 # Simple register map for simulator
 SIM_REGISTERS = {}
 SIM_EXCEPTIONS = set()
+
+# Fault injection state (for demo)
+FAULT_INJECTION = {
+    'timeout': False,
+    'bad_crc': False,
+    'malformed': False,
+    'exception_registers': set()
+}
 
 # -------- Runtime Configuration Management --------
 # Per-device pending config updates
@@ -105,7 +114,36 @@ PSK = bytes.fromhex("c41716a134168f52fbd4be3302fa5a88127ddde749501a199607b4c286a
 NONCE_STORE = {}  # device_id -> {'nonce': last_nonce, 'timestamp': last_seen_time}
 NONCE_WINDOW = 100  # Allow nonces within this window
 NONCE_EXPIRY_SECONDS = 75  # Clear nonces older than 75 seconds (allows device reboots during testing)
-SERVER_NONCE_COUNTER = 300  # Server nonce counter - start ahead of device's current ~204
+SERVER_NONCE_COUNTER = 300  # Server nonce counter - will be loaded from persistent storage
+
+def load_server_nonce():
+    """Load server nonce counter from persistent storage."""
+    global SERVER_NONCE_COUNTER
+    try:
+        if NONCE_STATE_FILE.exists():
+            with open(NONCE_STATE_FILE, 'r') as f:
+                data = json.load(f)
+                SERVER_NONCE_COUNTER = data.get('server_nonce_counter', 300)
+                print(f"[NONCE] Loaded server nonce counter: {SERVER_NONCE_COUNTER}")
+        else:
+            SERVER_NONCE_COUNTER = 300
+            save_server_nonce()
+            print(f"[NONCE] Initialized server nonce counter: {SERVER_NONCE_COUNTER}")
+    except Exception as e:
+        print(f"[NONCE] Error loading nonce state: {e}, using default")
+        SERVER_NONCE_COUNTER = 300
+
+def save_server_nonce():
+    """Save server nonce counter to persistent storage."""
+    try:
+        NONCE_STATE_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(NONCE_STATE_FILE, 'w') as f:
+            json.dump({'server_nonce_counter': SERVER_NONCE_COUNTER}, f)
+    except Exception as e:
+        print(f"[NONCE] Error saving nonce state: {e}")
+
+# Load nonce on module import
+load_server_nonce()
 
 def create_secured_response(payload_dict, device_id=None):
     """
@@ -137,6 +175,7 @@ def create_secured_response(payload_dict, device_id=None):
     
     SERVER_NONCE_COUNTER += 1
     nonce = SERVER_NONCE_COUNTER
+    save_server_nonce()  # Persist nonce to survive restarts
     timestamp = int(time.time())
     encrypted = True  # Enable server-side encryption for demonstration
     
@@ -496,6 +535,13 @@ def compute_crc(data: bytes) -> int:
 
 @app.route('/api/inverter/read', methods=['POST'])
 def inverter_read():
+    # Check for fault injection - TIMEOUT
+    if FAULT_INJECTION.get('timeout', False):
+        print(f"[FAULT] Simulating timeout - not responding")
+        import time
+        time.sleep(10)  # Wait longer than device timeout
+        return jsonify({'error': 'simulated timeout'}), 504
+    
     # Expecting JSON: {"frame": "<HEX>"}
     j = request.get_json(silent=True)
     if not j or 'frame' not in j:
@@ -558,8 +604,21 @@ def inverter_read():
             payload.append((val >> 8) & 0xFF)
             payload.append(val & 0xFF)
         crc = compute_crc(payload)
+        
+        # Check for fault injection - BAD CRC
+        if FAULT_INJECTION.get('bad_crc', False):
+            print(f"[FAULT] Injecting bad CRC into response")
+            crc = crc ^ 0xFFFF  # Corrupt the CRC
+        
         payload.append(crc & 0xFF)
         payload.append((crc >> 8) & 0xFF)
+        
+        # Check for fault injection - MALFORMED response
+        if FAULT_INJECTION.get('malformed', False):
+            print(f"[FAULT] Returning truncated/malformed response")
+            # Return only first 3 bytes (truncated)
+            return jsonify({'frame': payload[:3].hex().upper()})
+        
         return jsonify({'frame': payload.hex().upper()})
     else:
         return jsonify({'error': 'unsupported function in sim'}), 400
@@ -613,8 +672,8 @@ def inverter_config():
 def get_device_config_simple():
     """
     SIMPLIFIED configuration endpoint WITHOUT security checks.
-    Device polls this endpoint for pending configuration updates.
-    Returns pending config if available, empty otherwise.
+    Device polls this endpoint for pending configuration updates AND commands.
+    Returns pending config and/or command if available, empty otherwise.
     Use this for testing/debugging configuration flow.
     """
     device_id = request.headers.get('Device-ID') or request.args.get('device_id') or 'EcoWatt001'
@@ -624,13 +683,38 @@ def get_device_config_simple():
     print(f"[CONFIG-SIMPLE] Request path: {request.path}")
     print(f"[CONFIG-SIMPLE] Request method: {request.method}")
     
-    pending = PENDING_CONFIGS.get(device_id)
-    if pending:
-        print(f"[CONFIG-SIMPLE] Sending pending config to {device_id}: {pending}")
-        return jsonify(pending)
+    response = {}
+    has_content = False
     
-    # No pending config
-    print(f"[CONFIG-SIMPLE] No pending config for {device_id}")
+    # Check for pending config
+    pending_config = PENDING_CONFIGS.get(device_id)
+    if pending_config:
+        print(f"[CONFIG-SIMPLE] Sending pending config to {device_id}: {pending_config}")
+        response.update(pending_config)
+        has_content = True
+    
+    # Check for pending command
+    pending_command = PENDING_COMMANDS.get(device_id)
+    if pending_command:
+        print(f"[CONFIG-SIMPLE] Sending pending command to {device_id}: {pending_command}")
+        # Format command for device parsing
+        cmd_data = pending_command.get('command', {})
+        response['command'] = {
+            'command_id': pending_command.get('nonce', 0),
+            'action': cmd_data.get('action', 'write_register'),
+            'target_register': str(cmd_data.get('target_register', '')),
+            'value': float(cmd_data.get('value', 0)),
+            'nonce': pending_command.get('nonce', 0)
+        }
+        has_content = True
+        # Clear the pending command after sending
+        PENDING_COMMANDS.pop(device_id, None)
+    
+    if has_content:
+        return jsonify(response)
+    
+    # No pending config or command
+    print(f"[CONFIG-SIMPLE] No pending config/command for {device_id}")
     return jsonify({
         "status": "no_config",
         "message": "No pending configuration updates"
@@ -671,6 +755,7 @@ def get_device_config():
         # Send a proper "no config" structure that the device can parse
         global SERVER_NONCE_COUNTER
         SERVER_NONCE_COUNTER += 1
+        save_server_nonce()  # Persist nonce to disk
         empty_payload = {
             "status": "no_config",
             "nonce": SERVER_NONCE_COUNTER,
@@ -766,6 +851,7 @@ def send_config_update():
     # Generate nonce - use device-compatible range
     global SERVER_NONCE_COUNTER
     SERVER_NONCE_COUNTER += 1
+    save_server_nonce()  # Persist nonce to disk
     nonce = SERVER_NONCE_COUNTER
     
     # Build config update message
@@ -910,6 +996,7 @@ def get_pending_command():
     return jsonify({})
 
 @app.route('/api/inverter/command/result', methods=['POST'])
+@app.route('/api/inverter/config/command/result', methods=['POST'])  # Alias for device compatibility
 def receive_command_result():
     """
     Device sends command execution result.
@@ -1006,13 +1093,17 @@ def upload_firmware():
         log_fota_event('cloud', 'upload_failed', f'Invalid base64: {e}')
         return jsonify({'error': f'Invalid base64: {e}'}), 400
     
-    # Verify hash
+    # Verify hash (skip if testing corrupted firmware for rollback demo)
+    skip_validation = req.get('skip_validation', False)
     calculated_hash = hashlib.sha256(firmware_data).hexdigest()
-    if calculated_hash != fw_hash:
+    if calculated_hash != fw_hash and not skip_validation:
         log_fota_event('cloud', 'upload_failed', f'Hash mismatch: expected {fw_hash}, got {calculated_hash}')
         return jsonify({'error': 'Hash mismatch'}), 400
     
-    log_fota_event('cloud', 'firmware_hash_verified', f'Hash: {fw_hash}')
+    if skip_validation:
+        log_fota_event('cloud', 'rollback_test', f'Skipping hash validation for rollback demo (fake hash: {fw_hash})')
+    else:
+        log_fota_event('cloud', 'firmware_hash_verified', f'Hash: {fw_hash}')
     
     # Create manifest
     global FIRMWARE_MANIFEST
@@ -1066,6 +1157,17 @@ def get_fota_manifest():
     if FIRMWARE_MANIFEST:
         return jsonify({'fota': {'manifest': FIRMWARE_MANIFEST}})
     return jsonify({})
+
+@app.route('/api/cloud/fota/clear', methods=['POST'])
+def clear_fota_manifest():
+    """
+    Clear FOTA manifest to stop update loop after successful update.
+    """
+    global FIRMWARE_MANIFEST
+    FIRMWARE_MANIFEST = None
+    FIRMWARE_CHUNKS.clear()
+    print("[FOTA] Manifest and chunks cleared")
+    return jsonify({'status': 'success', 'message': 'FOTA manifest cleared'})
 
 @app.route('/api/inverter/fota/chunk', methods=['GET'])
 def get_fota_chunk():
@@ -1434,6 +1536,97 @@ def clear_security_logs():
     global SECURITY_LOGS
     SECURITY_LOGS = []
     return jsonify({'status': 'success', 'message': 'Security logs cleared'})
+
+# ---------------- Fault Injection for Demo ----------------
+
+# Fault injection state
+FAULT_INJECTION = {
+    'timeout': False,
+    'bad_crc': False,
+    'malformed': False,
+    'exception_registers': set()
+}
+
+@app.route('/api/inverter/fault/inject', methods=['POST'])
+def inject_fault():
+    """
+    Inject fault for demonstration purposes.
+    
+    Supported fault_type values:
+    - "timeout": Make Inverter SIM not respond (causes timeout)
+    - "bad_crc": Return frames with incorrect CRC
+    - "malformed": Return truncated/garbage frames
+    - "exception": Return Modbus exception for specific register
+    
+    Example:
+    POST /api/inverter/fault/inject
+    {"fault_type": "timeout"}
+    
+    POST /api/inverter/fault/inject
+    {"fault_type": "exception", "register": 0}
+    """
+    j = request.get_json(silent=True)
+    if not j:
+        return jsonify({'error': 'Missing JSON body'}), 400
+    
+    fault_type = j.get('fault_type', '').lower()
+    
+    if fault_type == 'timeout':
+        FAULT_INJECTION['timeout'] = True
+        print(f"[FAULT] Injected TIMEOUT fault - Inverter SIM will not respond")
+        return jsonify({'status': 'success', 'fault': 'timeout', 'message': 'Inverter SIM will timeout on next request'})
+    
+    elif fault_type == 'bad_crc':
+        FAULT_INJECTION['bad_crc'] = True
+        print(f"[FAULT] Injected BAD_CRC fault - Responses will have wrong CRC")
+        return jsonify({'status': 'success', 'fault': 'bad_crc', 'message': 'Responses will have incorrect CRC'})
+    
+    elif fault_type == 'malformed':
+        FAULT_INJECTION['malformed'] = True
+        print(f"[FAULT] Injected MALFORMED fault - Responses will be truncated")
+        return jsonify({'status': 'success', 'fault': 'malformed', 'message': 'Responses will be malformed'})
+    
+    elif fault_type == 'exception':
+        register = j.get('register', 0)
+        SIM_EXCEPTIONS.add(int(register))
+        print(f"[FAULT] Injected EXCEPTION fault for register {register}")
+        return jsonify({'status': 'success', 'fault': 'exception', 'register': register, 'message': f'Register {register} will return Modbus exception'})
+    
+    else:
+        return jsonify({'error': f'Unknown fault_type: {fault_type}', 'valid_types': ['timeout', 'bad_crc', 'malformed', 'exception']}), 400
+
+@app.route('/api/inverter/fault/clear', methods=['POST'])
+def clear_faults():
+    """
+    Clear all injected faults.
+    """
+    global FAULT_INJECTION
+    FAULT_INJECTION = {
+        'timeout': False,
+        'bad_crc': False,
+        'malformed': False,
+        'exception_registers': set()
+    }
+    SIM_EXCEPTIONS.clear()
+    print(f"[FAULT] All faults cleared - Inverter SIM back to normal")
+    return jsonify({'status': 'success', 'message': 'All faults cleared'})
+
+@app.route('/api/inverter/fault/status', methods=['GET'])
+def fault_status():
+    """
+    Get current fault injection status.
+    """
+    return jsonify({
+        'faults_active': {
+            'timeout': FAULT_INJECTION['timeout'],
+            'bad_crc': FAULT_INJECTION['bad_crc'],
+            'malformed': FAULT_INJECTION['malformed'],
+            'exception_registers': list(SIM_EXCEPTIONS)
+        }
+    })
+
+# Modify the inverter_read endpoint to support fault injection
+# The original /api/inverter/read will be replaced with fault-aware version
 
 # ---------------- Startup ----------------
 

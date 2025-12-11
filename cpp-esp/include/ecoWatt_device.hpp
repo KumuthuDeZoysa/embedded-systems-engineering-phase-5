@@ -37,6 +37,10 @@ public:
     
     // Callback for command received
     void onCommandReceived(const CommandRequest& command);
+    
+    // Power management for demo
+    bool setPowerMode(const char* mode);
+    void printPowerStats();
 
 private:
     AcquisitionScheduler* scheduler_ = nullptr;

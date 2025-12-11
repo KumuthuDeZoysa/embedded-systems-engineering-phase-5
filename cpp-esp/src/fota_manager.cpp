@@ -147,6 +147,10 @@ bool FOTAManager::startDownload() {
     Logger::info("[FOTA] Expected firmware size: %u bytes (%u chunks)", manifest_.size, manifest_.total_chunks);
     Logger::info("[FOTA] Writing chunks DIRECTLY to OTA partition (NO filesystem!)");
     
+    // Reset SHA256 hash calculator for integrity verification
+    sha256_.reset();
+    Logger::info("[FOTA] SHA256 hash calculator initialized");
+    
     setState(FOTAState::DOWNLOADING);
     
     // Initialize chunk tracking
@@ -235,12 +239,44 @@ bool FOTAManager::verifyFirmware() {
     Logger::info("[FOTA] Verifying firmware integrity");
     setState(FOTAState::VERIFYING);
     
-    // NO FILE TO READ! Firmware is already written to OTA partition
-    // Update library handles verification internally
-    // We just need to finalize the update
-    
     Logger::info("[FOTA] All %u chunks written to OTA partition (%u bytes)", 
                 progress_.chunks_received, progress_.bytes_received);
+    
+    // === CRITICAL: Verify SHA256 hash BEFORE finalizing OTA ===
+    Logger::info("[FOTA] Calculating SHA256 hash of downloaded firmware...");
+    
+    // Finalize hash calculation
+    uint8_t hash_result[32];
+    sha256_.finalize(hash_result, sizeof(hash_result));
+    
+    // Convert to hex string
+    char calculated_hash[65];
+    for (int i = 0; i < 32; i++) {
+        sprintf(&calculated_hash[i * 2], "%02x", hash_result[i]);
+    }
+    calculated_hash[64] = '\0';
+    
+    Logger::info("[FOTA] Expected hash:   %s", manifest_.hash.c_str());
+    Logger::info("[FOTA] Calculated hash: %s", calculated_hash);
+    
+    // Compare hashes
+    if (manifest_.hash != calculated_hash) {
+        Logger::error("[FOTA] ✗ Firmware verification FAILED!");
+        Logger::error("[FOTA] Hash mismatch detected - firmware may be corrupted or tampered!");
+        Logger::error("[FOTA] Expected:   %s", manifest_.hash.c_str());
+        Logger::error("[FOTA] Calculated: %s", calculated_hash);
+        
+        // Abort the OTA update - DO NOT call Update.end(true)!
+        Update.abort();
+        
+        setState(FOTAState::FAILED, "Hash verification failed - firmware rejected");
+        logFOTAEvent("verification_failed", "SHA256 hash mismatch - update rejected for safety");
+        
+        Logger::warn("[FOTA] Update rejected. Device will continue with current firmware.");
+        return false;
+    }
+    
+    Logger::info("[FOTA] ✓ SHA256 hash verified successfully!");
     Logger::info("[FOTA] Finalizing OTA update...");
     
     if (!Update.end(true)) {  // true = set boot partition
@@ -275,6 +311,16 @@ bool FOTAManager::applyUpdate() {
     
     // Clear boot count for new firmware
     clearBootCount();
+    
+    // IMPORTANT: Save the new version to version.txt so we don't re-download after reboot
+    File versionFile = LittleFS.open("/version.txt", "w");
+    if (versionFile) {
+        versionFile.print(manifest_.version.c_str());  // No newline to avoid trim issues
+        versionFile.close();
+        Logger::info("[FOTA] Saved new version %s to /version.txt", manifest_.version.c_str());
+    } else {
+        Logger::warn("[FOTA] Failed to save version file - may re-download after reboot");
+    }
     
     // Save state before reboot
     saveState();
@@ -507,7 +553,7 @@ void FOTAManager::loop() {
     unsigned long now = millis();
     
     // Wait at least 2 seconds between chunk downloads (faster for testing)
-    const unsigned long CHUNK_INTERVAL = 2000;  // Changed from 10000ms to 2000ms
+    const unsigned long CHUNK_INTERVAL = 500;  // Fast download for demo (500ms between chunks)
     
     if (now - last_chunk_time < CHUNK_INTERVAL) {
         return; // Not time yet
@@ -829,6 +875,9 @@ bool FOTAManager::saveFirmwareChunk(uint32_t chunk_number, const uint8_t* data, 
     // Write DIRECTLY to OTA partition using Update library
     // NO filesystem storage! Data goes straight to flash OTA partition
     
+    // Update running SHA256 hash with this chunk's data
+    sha256_.update(data, size);
+    
     // Update.write() expects non-const pointer, so we cast it
     size_t written = Update.write(const_cast<uint8_t*>(data), size);
     
@@ -909,8 +958,11 @@ std::string FOTAManager::getCurrentFirmwareVersion() {
         File file = LittleFS.open("/version.txt", "r");
         if (file) {
             String version = file.readStringUntil('\n');
+            version.trim();  // Remove any whitespace/newlines
             file.close();
-            return version.c_str();
+            if (version.length() > 0) {
+                return version.c_str();
+            }
         }
     }
     

@@ -9,9 +9,9 @@ import time
 import hashlib
 import base64
 
-def create_test_firmware(version="1.0.4", size=35840):
-    """Create a test firmware binary for demo purposes."""
-    print(f"Creating test firmware: version {version}, size {size} bytes")
+def create_test_firmware(version="1.0.4", size=40960):
+    """Create a test firmware binary for demo purposes (40KB = 10 chunks)."""
+    print(f"Creating test firmware: version {version}, size {size} bytes ({size//1024} KB)")
     
     # Create realistic firmware content with proper ESP32 headers
     firmware_data = bytearray(size)

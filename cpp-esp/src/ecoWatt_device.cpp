@@ -211,6 +211,9 @@ void EcoWattDevice::setup() {
     }
     if (wifi_->isConnected()) {
         Logger::info("WiFi connected successfully");
+        #if defined(ESP32) || defined(ESP8266)
+        Logger::info("Device IP address: %s", WiFi.localIP().toString().c_str());
+        #endif
     } else {
         Logger::error("WiFi connection failed after 30 seconds");
     }
@@ -414,10 +417,20 @@ void EcoWattDevice::loop() {
     // Storage operations
     if (storage_) storage_->loop();
     
-    // Acquisition operations (active period)
-    if (scheduler_) {
+    // Skip acquisition during FOTA download for faster updates
+    bool fota_in_progress = fota_ && fota_->isInProgress();
+    
+    // Acquisition operations (active period) - SKIP during FOTA
+    if (scheduler_ && !fota_in_progress) {
         if (power_mgr_) power_mgr_->signalActivity();
         scheduler_->loop();
+    } else if (fota_in_progress) {
+        // Log occasionally that we're pausing acquisition for FOTA
+        static unsigned long last_fota_log = 0;
+        if (millis() - last_fota_log > 10000) {  // Log every 10 seconds
+            Logger::info("[FOTA] Data acquisition paused during firmware download");
+            last_fota_log = millis();
+        }
     }
     
     // TEMPORARILY DISABLED FOR FOTA TESTING
@@ -473,3 +486,61 @@ void EcoWattDevice::loop() {
         last_power_log = millis();
     }
 }
+
+bool EcoWattDevice::setPowerMode(const char* mode) {
+    if (!power_mgr_) {
+        Logger::error("[Device] Power manager not initialized");
+        return false;
+    }
+    
+    PowerMode pm;
+    if (strcmp(mode, "HIGH") == 0 || strcmp(mode, "HIGH_PERFORMANCE") == 0) {
+        pm = PowerMode::HIGH_PERFORMANCE;
+    } else if (strcmp(mode, "NORMAL") == 0) {
+        pm = PowerMode::NORMAL;
+    } else if (strcmp(mode, "LOW") == 0 || strcmp(mode, "LOW_POWER") == 0) {
+        pm = PowerMode::LOW_POWER;
+    } else {
+        Logger::error("[Device] Unknown power mode: %s", mode);
+        return false;
+    }
+    
+    Logger::info("[Device] Setting power mode to: %s", mode);
+    bool success = power_mgr_->setPowerMode(pm);
+    
+    if (success) {
+        // Print stats immediately after mode change
+        printPowerStats();
+    }
+    
+    return success;
+}
+
+void EcoWattDevice::printPowerStats() {
+    if (!power_mgr_) {
+        Serial.println("[PowerMgr] Not initialized");
+        return;
+    }
+    
+    PowerStats stats = power_mgr_->getStats();
+    
+    Serial.println("\n========== POWER STATS ==========");
+    Serial.printf("Mode:           %s\n", powerModeToString(stats.current_mode));
+    Serial.printf("CPU Frequency:  %u MHz\n", stats.cpu_freq_mhz);
+    Serial.printf("WiFi Sleep:     %s\n", stats.wifi_sleep_enabled ? "ENABLED" : "DISABLED");
+    Serial.printf("WiFi Active:    %s\n", stats.wifi_active ? "YES" : "NO");
+    Serial.printf("ADC Active:     %s\n", stats.adc_active ? "YES" : "NO");
+    Serial.printf("Mode Switches:  %u\n", stats.mode_switches);
+    Serial.println("---------------------------------");
+    Serial.printf("Est. Current:   %.2f mA\n", stats.estimated_current_ma);
+    Serial.printf("Est. Power:     %.2f mW\n", stats.estimated_power_mw);
+    Serial.println("=================================\n");
+    
+    // Also log to file
+    Logger::info("[PowerMgr] Mode=%s, CPU=%uMHz, Current=%.2fmA, Power=%.2fmW",
+                powerModeToString(stats.current_mode),
+                stats.cpu_freq_mhz,
+                stats.estimated_current_ma,
+                stats.estimated_power_mw);
+}
+
